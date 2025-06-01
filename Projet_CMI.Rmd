@@ -1,0 +1,201 @@
+```{r}
+library(readxl)
+library(readr)
+library(dplyr)
+library(tidyr)
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(stargazer)
+```
+
+
+```{r}
+fichier <- "C:/Users/imene/OneDrive - Université paris nanterre/CMI/CMIL3/Semestre6/Projet CMI/Statistiques/extraction_minière.xlsx"
+data <- read_excel(fichier, sheet = "Feuil1")
+
+colnames(data)
+```
+
+
+```{r}
+#Nettoyage
+data <- data %>%
+  rename_with(~tolower(gsub(" ", "_", .))) %>%
+  filter(!is.na(year), !is.na(country))
+
+colSums(!is.na(data))
+
+data_clean <- data %>%
+  filter(
+    rowSums(!is.na(select(., starts_with("prod_")))) > 0 |
+    rowSums(!is.na(select(., starts_with("reserve_")))) > 0
+  )
+
+# Repassage en format long
+data_long <- data_clean %>%
+  pivot_longer(
+    cols = starts_with("prod_"),
+    names_to = "metal",
+    values_to = "production"
+  ) %>%
+  mutate(metal = gsub("prod_", "", metal)) %>%
+  filter(!is.na(production), production > 0)  # Filtre important ici
+
+# Vérifier ce qu’il reste
+summary(data_long)
+length(unique(data_long$metal))
+
+
+```
+
+
+```{r}
+#Statistiques et graphiques générales 
+total_metal <- data_long %>%
+  group_by(metal) %>%
+  summarise(total_prod = sum(production, na.rm = TRUE)) %>%
+  arrange(desc(total_prod))
+
+#Tableau de statistiques
+statistiques_metaux <- data_long %>%
+  group_by(metal) %>%
+  summarise(
+    n_obs = n(),
+    pays_diff = n_distinct(country),
+    min = min(production, na.rm = TRUE),
+    max = max(production, na.rm = TRUE),
+    moyenne = mean(production, na.rm = TRUE),
+    mediane = median(production, na.rm = TRUE),
+    ecart_type = sd(production, na.rm = TRUE),
+    coef_variation = round((sd(production, na.rm = TRUE) / mean(production, na.rm = TRUE)) * 100, 1)
+  ) %>%
+  arrange(desc(moyenne))
+
+statistiques_metaux %>%
+  mutate(
+    min = format(min, big.mark = " ", scientific = FALSE),
+    max = format(max, big.mark = " ", scientific = FALSE),
+    moyenne = format(moyenne, big.mark = " ", scientific = FALSE),
+    mediane = format(mediane, big.mark = " ", scientific = FALSE),
+    ecart_type = format(ecart_type, big.mark = " ", scientific = FALSE)
+  )
+
+ggplot(total_metal, aes(x = reorder(metal, total_prod), y = total_prod)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Production totale par matière première",
+       x = "Métal", y = "Production cumulée") +
+  theme_minimal()
+
+ggplot(top_pays, aes(x = reorder(country, prod_totale), y = prod_totale)) +
+  geom_col(fill = "darkorange") +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Top 5 pays producteurs (tous métaux)",
+       x = "Pays", y = "Production totale") +
+  theme_minimal()
+
+ggplot(evol_annuelle, aes(x = year, y = prod_totale)) +
+  geom_line(color = "darkgreen") +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Évolution annuelle de la production mondiale",
+       x = "Année", y = "Production totale") +
+  theme_minimal()
+
+ggplot(data_long, aes(x = metal, y = production)) +
+  geom_boxplot() +
+  coord_flip() +
+  scale_y_continuous(labels = label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Variabilité de la production par métal",
+       x = "Métal", y = "Production") +
+  theme_minimal()
+```
+
+```{r}
+#Statistiques et graphoiques sur le Nickel
+
+nickel <- data %>%
+  select(country, year, prod_nickel, reserve_nickel) %>%
+  filter(!is.na(prod_nickel) | !is.na(reserve_nickel)) %>%
+  mutate(
+    prod_nickel = ifelse(prod_nickel == 0, NA, prod_nickel),
+    reserve_nickel = ifelse(reserve_nickel == 0, NA, reserve_nickel)
+  )
+
+stat_nickel <- nickel %>%
+  summarise(
+    n_obs = n(),
+    pays_diff = n_distinct(country),
+    min_prod = min(prod_nickel, na.rm = TRUE),
+    max_prod = max(prod_nickel, na.rm = TRUE),
+    moyenne = mean(prod_nickel, na.rm = TRUE),
+    mediane = median(prod_nickel, na.rm = TRUE),
+    ecart_type = sd(prod_nickel, na.rm = TRUE),
+    coef_variation = round((sd(prod_nickel, na.rm = TRUE) / mean(prod_nickel, na.rm = TRUE)) * 100, 1)
+  )
+
+stat_nickel %>%
+  mutate(across(where(is.numeric), ~ format(.x, big.mark = " ", scientific = FALSE)))
+
+nickel_monde <- nickel %>%
+  group_by(year) %>%
+  summarise(
+    prod_totale = sum(prod_nickel, na.rm = TRUE),
+    reserve_totale = sum(reserve_nickel, na.rm = TRUE)
+  )
+
+ggplot(nickel_monde, aes(x = year)) +
+  geom_line(aes(y = prod_totale, color = "Production")) +
+  geom_line(aes(y = reserve_totale, color = "Réserves")) +
+  scale_y_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Évolution mondiale de la production et des réserves de nickel",
+       x = "Année", y = "Tonnes", color = "Variable") +
+  theme_minimal()
+
+top_pays_nickel <- nickel %>%
+  group_by(country) %>%
+  summarise(prod_moyenne = mean(prod_nickel, na.rm = TRUE)) %>%
+  arrange(desc(prod_moyenne)) %>%
+  slice_head(n = 10)
+
+ggplot(top_pays_nickel, aes(x = reorder(country, prod_moyenne), y = prod_moyenne)) +
+  geom_col(fill = "steelblue") +
+  coord_flip() +
+  scale_y_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Top 10 pays producteurs de nickel", x = "Pays", y = "Production moyenne") +
+  theme_minimal()
+
+ggplot(nickel, aes(y = prod_nickel)) +
+  geom_boxplot(fill = "lightblue") +
+  scale_y_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Variabilité de la production de nickel", y = "Production (tonnes)") +
+  theme_minimal()
+
+```
+
+```{r}
+#Econométrie
+
+nickel_valid <- nickel %>%
+  filter(!is.na(prod_nickel), !is.na(reserve_nickel))
+
+modele <- lm(prod_nickel ~ reserve_nickel, data = nickel_valid)
+stargazer(modele, type='text')
+
+# Corrélation
+cor.test(nickel_valid$prod_nickel, nickel_valid$reserve_nickel)
+
+ggplot(nickel_valid, aes(x = reserve_nickel, y = prod_nickel)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", color = "red", se = FALSE) +
+  scale_x_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  scale_y_continuous(labels = scales::label_number(scale_cut = cut_short_scale())) +
+  labs(title = "Régression linéaire : réserves vs production de nickel",
+       x = "Réserves de nickel", y = "Production de nickel") +
+  theme_minimal()
+
+```
+
+
